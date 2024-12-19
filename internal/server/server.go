@@ -21,7 +21,7 @@ func New() *FiberServer {
 	store := session.New(session.Config{
 		KeyLookup:      "cookie:session_id",
 		Expiration:     24 * time.Hour,
-		CookieSecure:   false,
+		CookieSecure:   true,
 		CookiePath:     "/",
 		CookieSameSite: "Lax",
 		CookieHTTPOnly: true,
