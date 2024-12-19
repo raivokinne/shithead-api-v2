@@ -88,6 +88,7 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 	lastUsedAt := time.Now()
 
 	token := models.PersonalAccessToken{
+		ID:            uuid.New(),
 		TokenableType: "User",
 		TokenableID:   user.ID,
 		Name:          "Primary",
@@ -197,7 +198,7 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		Value:    session.ID.String(),
 		Expires:  time.Now().Add(24 * time.Hour),
 		HTTPOnly: true,
-		Secure:   false,
+		Secure:   true,
 		SameSite: "Lax",
 	})
 
