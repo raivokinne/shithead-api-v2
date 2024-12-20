@@ -12,8 +12,7 @@ import (
 
 func (s *FiberServer) RegisterFiberRoutes() {
 	s.App.Use(cors.New(cors.Config{
-		AllowOrigins:     "https://www.troika.id.lv",
-		// AllowOrigins:     "http://localhost:3001",
+		AllowOrigins:     "https://www.troika.id.lv, http://localhost:3001",
 		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH",
 		AllowHeaders:     "Accept,Authorization,Content-Type",
 		AllowCredentials: true,
@@ -29,14 +28,12 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	userHandler := handler.NewUserHandler(s.db)
 	notificationHandler := handler.NewNotificationHandler(s.db)
 
-	api := s.App.Group("/api")
+	s.App.Post("/register", authHandler.Register)
+	s.App.Post("/login", authHandler.Login)
+	s.App.Post("/logout", middleware.AuthMiddleware(s.db), authHandler.Logout)
+	s.App.Get("/user", middleware.AuthMiddleware(s.db), authHandler.GetCurrentUser)
 
-	api.Post("/register", authHandler.Register)
-	api.Post("/login", authHandler.Login)
-	api.Post("/logout", middleware.AuthMiddleware(s.db), authHandler.Logout)
-	api.Get("/user", middleware.AuthMiddleware(s.db), authHandler.GetCurrentUser)
-
-	lobbies := api.Group("/lobbies", middleware.AuthMiddleware(s.db))
+	lobbies := s.App.Group("/lobbies", middleware.AuthMiddleware(s.db))
 	lobbies.Get("/", lobbyHandler.Index)
 	lobbies.Post("/", lobbyHandler.Store)
 	lobbies.Get("/:id/show", lobbyHandler.Show)
@@ -45,10 +42,10 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	lobbies.Post("/:lobbyId/invite", lobbyHandler.InviteUser)
 	lobbies.Post("/invitation/accept", lobbyHandler.AcceptInvitation)
 	lobbies.Post("/:lobbyId/ready", lobbyHandler.ReadyUp)
-	api.Post("/lobbies/:id/invitations/accept", lobbyHandler.AcceptInvitation)
+	s.App.Post("/lobbies/:id/invitations/accept", lobbyHandler.AcceptInvitation)
 
 	// // Game Routes
-	// games := api.Group("/games", middleware.AuthMiddleware(s.db))
+	// games := s.App.Group("/games", middleware.AuthMiddleware(s.db))
 	// games.Get("/:gameId", gameHandler.Show)
 	// games.Post("/create", gameHandler.CreateGame)
 	// games.Post("/:gameId/start", gameHandler.StartGame)
@@ -56,15 +53,15 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	// games.Post("/:gameId/play-card", gameHandler.PlayCard)
 	// games.Get("/:gameId/deck", gameHandler.GetDeckInfo)
 
-	profiles := api.Group("/profile", middleware.AuthMiddleware(s.db))
+	profiles := s.App.Group("/profile", middleware.AuthMiddleware(s.db))
 	profiles.Get("/:id/show", profileHandler.Show)
 	profiles.Put("/:id/update", profileHandler.Update)
 	profiles.Put("/:id/password", profileHandler.UpdatePassword)
 	profiles.Delete("/:id/delete", profileHandler.Destroy)
 
-	api.Get("/users/search", userHandler.SearchUsers)
+	s.App.Get("/users/search", userHandler.SearchUsers)
 
-	api.Get("/notifications", notificationHandler.GetNotifications)
-	api.Put("/notifications/:id/read", notificationHandler.MarkAsRead)
-	api.Put("/notifications/read-all", notificationHandler.MarkAllAsRead)
+	s.App.Get("/notifications", notificationHandler.GetNotifications)
+	s.App.Put("/notifications/:id/read", notificationHandler.MarkAsRead)
+	s.App.Put("/notifications/read-all", notificationHandler.MarkAllAsRead)
 }
