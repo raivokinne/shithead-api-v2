@@ -11,11 +11,11 @@ import (
 )
 
 func (s *FiberServer) RegisterFiberRoutes() {
-	// Middleware
 	s.App.Use(cors.New(cors.Config{
 		AllowOrigins:     "https://www.troika.id.lv",
+		// AllowOrigins:     "http://localhost:3001",
 		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH",
-		AllowHeaders:     "Accept,Authorization,Content-Type,X-CSRF-Token",
+		AllowHeaders:     "Accept,Authorization,Content-Type",
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -23,23 +23,19 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	s.App.Use(logger.New())
 	s.store.RegisterType(uuid.New())
 
-	// Handlers
 	authHandler := handler.NewAuthHandler(s.db, s.store)
 	lobbyHandler := handler.NewLobbyHandler(s.db)
 	profileHandler := handler.NewProfileHandler(s.db)
 	userHandler := handler.NewUserHandler(s.db)
 	notificationHandler := handler.NewNotificationHandler(s.db)
 
-	// Routes
 	api := s.App.Group("/api")
 
-	// Auth Routes
 	api.Post("/register", authHandler.Register)
 	api.Post("/login", authHandler.Login)
 	api.Post("/logout", middleware.AuthMiddleware(s.db), authHandler.Logout)
 	api.Get("/user", middleware.AuthMiddleware(s.db), authHandler.GetCurrentUser)
 
-	// Lobby Routes
 	lobbies := api.Group("/lobbies", middleware.AuthMiddleware(s.db))
 	lobbies.Get("/", lobbyHandler.Index)
 	lobbies.Post("/", lobbyHandler.Store)
@@ -60,17 +56,14 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	// games.Post("/:gameId/play-card", gameHandler.PlayCard)
 	// games.Get("/:gameId/deck", gameHandler.GetDeckInfo)
 
-	// Profile Routes
 	profiles := api.Group("/profile", middleware.AuthMiddleware(s.db))
 	profiles.Get("/:id/show", profileHandler.Show)
 	profiles.Put("/:id/update", profileHandler.Update)
 	profiles.Put("/:id/password", profileHandler.UpdatePassword)
 	profiles.Delete("/:id/delete", profileHandler.Destroy)
 
-	// User Routes
 	api.Get("/users/search", userHandler.SearchUsers)
 
-	// Notification Routes
 	api.Get("/notifications", notificationHandler.GetNotifications)
 	api.Put("/notifications/:id/read", notificationHandler.MarkAsRead)
 	api.Put("/notifications/read-all", notificationHandler.MarkAllAsRead)
