@@ -62,7 +62,7 @@ func generateInviteCode() string {
 
 func (h *LobbyHandler) Index(c *fiber.Ctx) error {
 	var lobbies []models.Lobby
-	if err := h.db.DB().Preload("Owner").Preload("Players").Preload("Invitations").Find(&lobbies).Error; err != nil {
+	if err := h.db.DB().Preload("Owner").Preload("Players").Preload("LobbyInvitations").Find(&lobbies).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Error fetching lobbies",
 		})
