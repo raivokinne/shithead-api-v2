@@ -27,17 +27,10 @@ func NewNotificationHandler(db database.Service) *NotificationHandler {
 }
 
 func (h *NotificationHandler) GetNotifications(c *fiber.Ctx) error {
-	userIDInterface := c.Locals("user_id")
-	if userIDInterface == nil {
+	userID := c.Locals("user_id").(uuid.UUID)
+	if userID == uuid.Nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": "User ID not found in context",
-		})
-	}
-
-	userID, ok := userIDInterface.(uint)
-	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": "Invalid user ID format",
+			"error": "Unauthorized",
 		})
 	}
 
@@ -66,7 +59,7 @@ func (h *NotificationHandler) GetNotifications(c *fiber.Ctx) error {
 
 func (h *NotificationHandler) MarkAsRead(c *fiber.Ctx) error {
 	notificationID := c.Params("id")
-	userID := c.Locals("user_id").(uint)
+	userID := c.Locals("user_id").(uuid.UUID)
 
 	result := h.db.DB().Model(&models.Notification{}).
 		Where("id = ? AND user_id = ?", notificationID, userID).

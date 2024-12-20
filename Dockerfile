@@ -25,7 +25,7 @@ RUN apk add --no-cache bash git
 
 RUN go install github.com/air-verse/air@latest
 
-EXPOSE ${PORT}
+EXPOSE 8000
 
 CMD ["air"]
 
