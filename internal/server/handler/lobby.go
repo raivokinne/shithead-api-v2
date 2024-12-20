@@ -123,6 +123,7 @@ func (h *LobbyHandler) Store(c *fiber.Ctx) error {
 		RoundNumber: 1,
 		Status:      "waiting",
 		Winner:      "none",
+		CurrentPlayers: userID,
 	}
 
 	if err := tx.Create(&game).Error; err != nil {
