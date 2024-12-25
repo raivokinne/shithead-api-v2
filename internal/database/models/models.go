@@ -21,20 +21,32 @@ type User struct {
 	Notifications   []Notification `gorm:"foreignKey:UserID" json:"notifications"`
 }
 
+func (User) TableName() string {
+	return "users"
+}
+
 type PasswordResetToken struct {
 	Email     string     `gorm:"primaryKey;column:email" json:"email"`
 	Token     string     `gorm:"column:token;not null" json:"token"`
 	CreatedAt *time.Time `gorm:"column:created_at" json:"created_at"`
 }
 
+func (PasswordResetToken) TableName() string {
+	return "password_reset_tokens"
+}
+
 type Session struct {
-	ID           uuid.UUID    `gorm:"primaryKey;column:id" json:"id"`
+	ID           uuid.UUID `gorm:"primaryKey;column:id" json:"id"`
 	UserID       uuid.UUID `gorm:"column:user_id" json:"user_id"`
 	IPAddress    string    `gorm:"column:ip_address;size:45" json:"ip_address"`
 	UserAgent    string    `gorm:"column:user_agent;type:text" json:"user_agent"`
 	Payload      string    `gorm:"column:payload;type:text;not null" json:"payload"`
 	LastActivity int       `gorm:"column:last_activity;not null;index" json:"last_activity"`
 	User         *User     `gorm:"foreignKey:UserID" json:"user"`
+}
+
+func (Session) TableName() string {
+	return "sessions"
 }
 
 type Lobby struct {
@@ -54,10 +66,14 @@ type Lobby struct {
 	GameSettings     json.RawMessage   `gorm:"column:game_settings;type:jsonb" json:"game_settings"`
 	CreatedAt        time.Time         `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt        time.Time         `gorm:"column:updated_at" json:"updated_at"`
-	LobbyInvitations      []LobbyInvitation `gorm:"foreignKey:LobbyID" json:"invitations"`
+	LobbyInvitations []LobbyInvitation `gorm:"foreignKey:LobbyID" json:"invitations"`
 	Games            []Game            `gorm:"foreignKey:LobbyID" json:"games"`
 	Players          []Player          `gorm:"foreignKey:LobbyID" json:"players"`
 	LobbyQueues      []LobbyQueue      `gorm:"foreignKey:LobbyID" json:"lobby_queues"`
+}
+
+func (Lobby) TableName() string {
+	return "lobbies"
 }
 
 type Game struct {
@@ -65,7 +81,7 @@ type Game struct {
 	LobbyID             uuid.UUID `gorm:"column:lobby_id" json:"lobby_id"`
 	Lobby               Lobby     `gorm:"foreignKey:LobbyID" json:"lobby"`
 	Status              string    `gorm:"column:status;type:varchar(20);default:'waiting';not null" json:"status"`
-	CurrentTurnPlayerID uuid.UUID `gorm:"column:current_turn_player_id" json:"current_turn_player_id"`
+	CurrentTurnPlayerID *uuid.UUID `gorm:"column:current_turn_player_id;null" json:"current_turn_player_id"`
 	RoundNumber         int       `gorm:"column:round_number;default:1;not null" json:"round_number"`
 	Winner              string    `gorm:"column:winner;type:varchar(20);default:'none';not null" json:"winner"`
 	CreatedAt           time.Time `gorm:"column:created_at" json:"created_at"`
@@ -75,21 +91,26 @@ type Game struct {
 	Players             []Player  `gorm:"foreignKey:GameID" json:"players"`
 }
 
+func (Game) TableName() string {
+	return "games"
+}
+
 type LobbyInvitation struct {
 	ID              uuid.UUID  `gorm:"primaryKey;column:id" json:"id"`
 	LobbyID         uuid.UUID  `gorm:"column:lobby_id;not null" json:"lobby_id"`
 	Lobby           Lobby      `gorm:"foreignKey:LobbyID" json:"lobby"`
-	GameID          uuid.UUID  `gorm:"column:game_id" json:"game_id"`
-	Game            Game       `gorm:"foreignKey:GameID" json:"game"`
 	InviterID       uuid.UUID  `gorm:"column:inviter_id;not null" json:"inviter_id"`
 	Inviter         User       `gorm:"foreignKey:InviterID" json:"inviter"`
 	InvitedUserID   uuid.UUID  `gorm:"column:invited_user_id;not null" json:"invited_user_id"`
 	InvitedUser     User       `gorm:"foreignKey:InvitedUserID" json:"invited_user"`
 	Status          string     `gorm:"column:status;type:varchar(20);default:'pending';not null;index" json:"status"`
-	InvitationToken string     `gorm:"column:invitation_token;unique;not null" json:"invitation_token"`
 	ExpiresAt       time.Time  `gorm:"column:expires_at;not null;index" json:"expires_at"`
 	CreatedAt       *time.Time `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt       *time.Time `gorm:"column:updated_at" json:"updated_at"`
+}
+
+func (LobbyInvitation) TableName() string {
+	return "lobby_invitations"
 }
 
 type Deck struct {
@@ -104,6 +125,10 @@ type Deck struct {
 	CreatedAt         time.Time       `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt         time.Time       `gorm:"column:updated_at" json:"updated_at"`
 	Cards             []Card          `gorm:"foreignKey:DeckID" json:"cards"`
+}
+
+func (Deck) TableName() string {
+	return "decks"
 }
 
 type Card struct {
@@ -126,19 +151,28 @@ type Card struct {
 	UpdatedAt     *time.Time `gorm:"column:updated_at" json:"updated_at"`
 }
 
+func (Card) TableName() string {
+	return "cards"
+}
+
 type Player struct {
 	ID        uuid.UUID  `gorm:"primaryKey;column:id" json:"id"`
 	GameID    uuid.UUID  `gorm:"column:game_id;not null" json:"game_id"`
-	Game      Game       `gorm:"foreignKey:GameID" json:"game"`
 	UserID    uuid.UUID  `gorm:"column:user_id;not null" json:"user_id"`
-	User      User       `gorm:"foreignKey:UserID" json:"user"`
 	LobbyID   uuid.UUID  `gorm:"column:lobby_id;not null" json:"lobby_id"`
-	Lobby     Lobby      `gorm:"foreignKey:LobbyID" json:"lobby"`
 	Role      string     `gorm:"column:role;type:varchar(20);default:'player1';not null" json:"role"`
 	IsReady   bool       `gorm:"column:is_ready;default:false;not null" json:"is_ready"`
 	Score     int        `gorm:"column:score;default:0;not null" json:"score"`
 	CreatedAt *time.Time `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt *time.Time `gorm:"column:updated_at" json:"updated_at"`
+
+	User      User       `gorm:"foreignKey:UserID" json:"user"`
+	Lobby     Lobby      `gorm:"foreignKey:LobbyID" json:"lobby"`
+	Game      Game       `gorm:"foreignKey:GameID" json:"game"`
+}
+
+func (Player) TableName() string {
+	return "players"
 }
 
 type LobbyQueue struct {
@@ -154,15 +188,23 @@ type LobbyQueue struct {
 	UpdatedAt *time.Time `gorm:"column:updated_at" json:"updated_at"`
 }
 
+func (LobbyQueue) TableName() string {
+	return "lobby_queues"
+}
+
 type Notification struct {
 	ID        uuid.UUID `gorm:"type:uuid;primaryKey;column:id" json:"id"`
 	Type      *string   `gorm:"column:type" json:"type"`
 	UserID    uuid.UUID `gorm:"column:user_id;not null" json:"user_id"`
-	Data      string    `gorm:"column:data;type:text;not null" json:"data"`
+	Data      json.RawMessage    `gorm:"column:data;type:json;not null" json:"data"`
 	ReadAt    time.Time `gorm:"column:read_at" json:"read_at"`
 	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt time.Time `gorm:"column:updated_at" json:"updated_at"`
 	User      User      `gorm:"foreignKey:UserID" json:"user"`
+}
+
+func (Notification) TableName() string {
+	return "notifications"
 }
 
 type PersonalAccessToken struct {
@@ -176,4 +218,8 @@ type PersonalAccessToken struct {
 	ExpiresAt     *time.Time `gorm:"column:expires_at" json:"expires_at"`
 	CreatedAt     *time.Time `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt     *time.Time `gorm:"column:updated_at" json:"updated_at"`
+}
+
+func (PersonalAccessToken) TableName() string {
+	return "personal_access_tokens"
 }

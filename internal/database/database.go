@@ -12,6 +12,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"gorm.io/gorm/schema"
 )
 
 type Service interface {
@@ -42,11 +43,20 @@ func New() Service {
 			IgnoreRecordNotFoundError: true,
 			Colorful:                  true,
 		},
-	)
+		)
 
-	db, err := gorm.Open(postgres.Open(dbUrl), &gorm.Config{
+	config := &gorm.Config{
 		Logger: gormLogger,
-	})
+		NamingStrategy: schema.NamingStrategy{
+			SingularTable: true,
+		},
+		DisableForeignKeyConstraintWhenMigrating: true,
+		PrepareStmt:                              true,
+		SkipDefaultTransaction:                   true,
+		QueryFields:                              true,
+	}
+
+	db, err := gorm.Open(postgres.Open(dbUrl), config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -63,11 +73,12 @@ func New() Service {
 	dbInstance = &service{
 		db: db,
 	}
+
 	return dbInstance
 }
 
 func (s *service) DB() *gorm.DB {
-	return s.db
+	return s.db.Set("gorm:auto_preload", false)
 }
 
 func (s *service) Health() map[string]string {

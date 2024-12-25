@@ -1,8 +1,8 @@
 package middleware
 
 import (
-	"api-v2/internal/database"
-	"api-v2/internal/database/models"
+	"api/internal/database"
+	"api/internal/database/models"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -25,7 +25,7 @@ func AuthMiddleware(db database.Service) fiber.Handler {
         }
 
         currentTime := int(time.Now().Unix())
-        if session.LastActivity+(24*3600) < currentTime {
+        if session.LastActivity + (24 * 3600) < currentTime {
             return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
                 "error": "Session expired",
             })

@@ -10,9 +10,9 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
-	"api-v2/internal/database"
-	"api-v2/internal/database/models"
-	"api-v2/internal/server/utils"
+	"api/internal/database"
+	"api/internal/database/models"
+	"api/internal/server/utils"
 )
 
 type AuthHandler struct {
@@ -32,11 +32,91 @@ type RegisterRequest struct {
 	PasswordConfirmation string `json:"password_confirmation" validate:"required,min=6"`
 }
 
+type FirebaseUser struct {
+	ID     string `json:"id" validate:"required"`
+	Email  string `json:"email" validate:"required,email"`
+	Name   string `json:"name" validate:"required"`
+	Avatar string `json:"avatar" validate:"required"`
+}
+
+type FirebaseTokenRequest struct {
+	Token    string       `json:"token" validate:"required"`
+	Provider string       `json:"provider" validate:"required"`
+	User     FirebaseUser `json:"user" validate:"required"`
+}
+
 func NewAuthHandler(db database.Service, store *session.Store) *AuthHandler {
 	return &AuthHandler{
 		store: store,
 		db:    db,
 	}
+}
+
+func (h *AuthHandler) FirebaseLogin(c *fiber.Ctx) error {
+	var req FirebaseTokenRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request body",
+		})
+	}
+
+	sessionID := c.Cookies("session_id")
+	if sessionID != "" {
+		var session models.Session
+		if err := h.db.DB().Where("id = ?", sessionID).First(&session).Error; err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"message":    "Already logged in",
+				"session_id": sessionID,
+			})
+		}
+	}
+
+	sess, err := h.store.Get(c)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error getting session",
+		})
+	}
+
+	sess.SetExpiry(time.Hour * 24)
+	sess.Set("user_id", req.User.ID)
+	sess.Set("email", req.User.Email)
+	sess.Set("name", req.User.Name)
+	sess.Set("avatar", req.User.Avatar)
+
+	session := models.Session{
+		ID:           uuid.New(),
+		IPAddress:    c.IP(),
+		UserAgent:    c.Get("User-Agent"),
+		LastActivity: int(time.Now().Unix()),
+	}
+
+	if err := h.db.DB().Create(&session).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error creating session",
+		})
+	}
+
+	sess.Set("session_id", session.ID)
+
+	if err := sess.Save(); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error saving session",
+		})
+	}
+
+	c.Cookie(&fiber.Cookie{
+		Name:     "session_id",
+		Value:    session.ID.String(),
+		Expires:  time.Now().Add(time.Hour * 24),
+		HTTPOnly: true,
+		Secure:   true,
+		SameSite: "Lax",
+	})
+
+	return c.JSON(fiber.Map{
+		"success": true,
+	})
 }
 
 func (h *AuthHandler) Register(c *fiber.Ctx) error {

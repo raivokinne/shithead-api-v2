@@ -8,8 +8,8 @@ all: build test
 
 build:
 	@echo "Building..."
-	
-	
+
+
 	@go build -o main cmd/api/main.go
 
 # Run the application
@@ -79,4 +79,13 @@ db-up:
 db-mig-create:
 	@GOOSE_DRIVER=$(DB_DRIVER) GOOSE_DBSTRING=$(DATABASE_URL) go run github.com/pressly/goose/v3/cmd/goose@latest -dir=$(MIGRATION_DIR) create $(filter-out $@,$(MAKECMDGOALS)) sql
 
-.PHONY: all build run test clean watch docker-run docker-down itest
+db-seed-create:
+	@GOOSE_DRIVER=$(DB_DRIVER) GOOSE_DBSTRING=$(DATABASE_URL) go run github.com/pressly/goose/v3/cmd/goose@latest -dir=$(MIGRATION_DIR) create $(filter-out $@,$(MAKECMDGOALS))
+
+db-seed-up:
+	@GOOSE_DRIVER=$(DB_DRIVER) GOOSE_DBSTRING=$(DATABASE_URL) go run github.com/pressly/goose/v3/cmd/goose@latest -dir=$(MIGRATION_DIR) up
+
+db-seed-down:
+	@GOOSE_DRIVER=$(DB_DRIVER) GOOSE_DBSTRING=$(DATABASE_URL) go run github.com/pressly/goose/v3/cmd/goose@latest -dir=$(MIGRATION_DIR) down
+
+

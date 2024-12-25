@@ -1,7 +1,7 @@
 package main
 
 import (
-	"api-v2/internal/server"
+	"api/internal/server"
 	"context"
 	"fmt"
 	"log"

@@ -6,7 +6,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"
 
-	"api-v2/internal/database"
+	"api/internal/database"
 )
 
 type FiberServer struct {
@@ -29,8 +29,8 @@ func New() *FiberServer {
 
 	server := &FiberServer{
 		App: fiber.New(fiber.Config{
-			ServerHeader: "api-v2",
-			AppName:      "api-v2",
+			ServerHeader: "api",
+			AppName:      "api",
 		}),
 
 		db: database.New(),

@@ -1,8 +1,9 @@
 package handler
 
 import (
-	"api-v2/internal/database"
-	"api-v2/internal/database/models"
+	"api/internal/database"
+	"api/internal/database/models"
+	"encoding/json"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -14,10 +15,11 @@ type NotificationHandler struct {
 }
 
 type NotificationResponse struct {
-	ID        uuid.UUID      `json:"id"`
-	Type      string    `json:"type"`
-	Data      string `json:"data"`
-	Read      time.Time      `json:"read"`
+	ID        uuid.UUID       `json:"id"`
+	Type      string          `json:"type"`
+	Data      json.RawMessage `json:"data"`
+	Read      time.Time       `json:"read"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
 func NewNotificationHandler(db database.Service) *NotificationHandler {
@@ -27,15 +29,24 @@ func NewNotificationHandler(db database.Service) *NotificationHandler {
 }
 
 func (h *NotificationHandler) GetNotifications(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(uuid.UUID)
-	if userID == uuid.Nil {
+	sessionID := c.Cookies("session_id")
+
+	var session models.Session
+	if err := h.db.DB().Where("id = ?", sessionID).First(&session).Error; err != nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": "Unauthorized",
+			"error": "Invalid session",
+		})
+	}
+
+	var user models.User
+	if err := h.db.DB().First(&user, session.UserID).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error fetching user",
 		})
 	}
 
 	var notifications []models.Notification
-	if err := h.db.DB().Where("user_id = ?", userID).
+	if err := h.db.DB().Where("user_id = ?", user.ID).
 		Order("created_at DESC").
 		Limit(50).
 		Find(&notifications).Error; err != nil {
@@ -51,6 +62,7 @@ func (h *NotificationHandler) GetNotifications(c *fiber.Ctx) error {
 			Type:      *notif.Type,
 			Data:      notif.Data,
 			Read:      notif.ReadAt,
+			CreatedAt: notif.CreatedAt,
 		}
 	}
 
@@ -59,10 +71,24 @@ func (h *NotificationHandler) GetNotifications(c *fiber.Ctx) error {
 
 func (h *NotificationHandler) MarkAsRead(c *fiber.Ctx) error {
 	notificationID := c.Params("id")
-	userID := c.Locals("user_id").(uuid.UUID)
+	sessionID := c.Cookies("session_id")
+
+	var session models.Session
+	if err := h.db.DB().Where("id = ?", sessionID).First(&session).Error; err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Invalid session",
+		})
+	}
+
+	var user models.User
+	if err := h.db.DB().First(&user, session.UserID).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error fetching user",
+		})
+	}
 
 	result := h.db.DB().Model(&models.Notification{}).
-		Where("id = ? AND user_id = ?", notificationID, userID).
+		Where("id = ? AND user_id = ?", notificationID, user.ID).
 		Update("read_at", time.Now())
 
 	if result.Error != nil {
@@ -83,10 +109,24 @@ func (h *NotificationHandler) MarkAsRead(c *fiber.Ctx) error {
 }
 
 func (h *NotificationHandler) MarkAllAsRead(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(uint)
+	sessionID := c.Cookies("session_id")
+
+	var session models.Session
+	if err := h.db.DB().Where("id = ?", sessionID).First(&session).Error; err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Invalid session",
+		})
+	}
+
+	var user models.User
+	if err := h.db.DB().First(&user, session.UserID).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error fetching user",
+		})
+	}
 
 	result := h.db.DB().Model(&models.Notification{}).
-		Where("user_id = ? AND read_at IS NULL", userID).
+		Where("user_id = ? AND read_at IS NULL", user.ID).
 		Update("read_at", time.Now())
 
 	if result.Error != nil {

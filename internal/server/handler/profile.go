@@ -1,8 +1,8 @@
 package handler
 
 import (
-	"api-v2/internal/database"
-	"api-v2/internal/database/models"
+	"api/internal/database"
+	"api/internal/database/models"
 	"errors"
 	"fmt"
 	"mime/multipart"

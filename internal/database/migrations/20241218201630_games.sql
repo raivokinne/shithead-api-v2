@@ -9,8 +9,7 @@ CREATE TABLE games (
     created_at TIMESTAMP NULL,
     updated_at TIMESTAMP NULL,
 
-    FOREIGN KEY (lobby_id) REFERENCES lobbies(id) ON DELETE CASCADE,
-    FOREIGN KEY (current_turn_player_id) REFERENCES users(id) ON DELETE SET NULL
+    FOREIGN KEY (lobby_id) REFERENCES lobbies(id) ON DELETE CASCADE
 );
 
 -- +goose down

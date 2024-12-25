@@ -1,13 +1,15 @@
 package server
 
 import (
+	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/contrib/websocket"
 	"github.com/google/uuid"
 
-	"api-v2/internal/server/handler"
-	"api-v2/internal/server/middleware"
+	"api/internal/server/handler"
+	"api/internal/server/middleware"
 )
 
 func (s *FiberServer) RegisterFiberRoutes() {
@@ -32,8 +34,16 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	s.App.Post("/login", authHandler.Login)
 	s.App.Post("/logout", middleware.AuthMiddleware(s.db), authHandler.Logout)
 	s.App.Get("/user", middleware.AuthMiddleware(s.db), authHandler.GetCurrentUser)
+	s.App.Post("/firebase", authHandler.FirebaseLogin)
 
 	lobbies := s.App.Group("/lobbies", middleware.AuthMiddleware(s.db))
+	lobbies.Use("/chat", func(c *fiber.Ctx) error {
+		if websocket.IsWebSocketUpgrade(c) {
+			c.Locals("allowed", true)
+			return c.Next()
+		}
+		return fiber.ErrUpgradeRequired
+	})
 	lobbies.Get("/", lobbyHandler.Index)
 	lobbies.Post("/", lobbyHandler.Store)
 	lobbies.Get("/:id/show", lobbyHandler.Show)
@@ -42,7 +52,6 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	lobbies.Post("/:lobbyId/invite", lobbyHandler.InviteUser)
 	lobbies.Post("/invitation/accept", lobbyHandler.AcceptInvitation)
 	lobbies.Post("/:lobbyId/ready", lobbyHandler.ReadyUp)
-	s.App.Post("/lobbies/:id/invitations/accept", lobbyHandler.AcceptInvitation)
 
 	// // Game Routes
 	// games := s.App.Group("/games", middleware.AuthMiddleware(s.db))
