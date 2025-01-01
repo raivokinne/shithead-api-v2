@@ -1,11 +1,11 @@
 package server
 
 import (
-	"github.com/gofiber/fiber/v2"
+	"log"
+
 	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
-	"github.com/gofiber/contrib/websocket"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/google/uuid"
 
 	"api/internal/server/handler"
@@ -21,7 +21,12 @@ func (s *FiberServer) RegisterFiberRoutes() {
 		MaxAge:           300,
 	}))
 	s.App.Use(recover.New())
-	s.App.Use(logger.New())
+	logMiddleware, err := middleware.NewLogMiddleware()
+	if err != nil {
+		log.Fatal(err)
+	}
+	s.App.Use(logMiddleware.Handle)
+	s.App.Use(requestid.New())
 	s.store.RegisterType(uuid.New())
 
 	authHandler := handler.NewAuthHandler(s.db, s.store)
@@ -37,13 +42,6 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	s.App.Post("/firebase", authHandler.FirebaseLogin)
 
 	lobbies := s.App.Group("/lobbies", middleware.AuthMiddleware(s.db))
-	lobbies.Use("/chat", func(c *fiber.Ctx) error {
-		if websocket.IsWebSocketUpgrade(c) {
-			c.Locals("allowed", true)
-			return c.Next()
-		}
-		return fiber.ErrUpgradeRequired
-	})
 	lobbies.Get("/", lobbyHandler.Index)
 	lobbies.Post("/", lobbyHandler.Store)
 	lobbies.Get("/:id/show", lobbyHandler.Show)
