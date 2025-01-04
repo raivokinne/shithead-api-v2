@@ -1,0 +1,39 @@
+services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app
+    networks:
+      - shithead
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    restart: unless-stopped
+    volumes:
+      - .:/app
+      - go-modules:/go/pkg/mod
+    expose:
+      - 8080
+    environment:
+      APP_ENV: ${APP_ENV}
+      PORT: ${PORT}
+      DB_DRIVER: ${DB_DRIVER}
+      DATABASE_URL: ${DATABASE_URL}
+      MIGRATION_DIR: ${MIGRATION_DIR}
+    networks:
+      - shithead
+
+volumes:
+  go-modules:
+
+networks:
+  shithead:
+    driver: bridge
+
