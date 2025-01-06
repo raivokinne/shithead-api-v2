@@ -190,6 +190,7 @@ func (h *LobbyHandler) Show(c *fiber.Ctx) error {
 	}
 
 	var session models.Session
+
 	if err := h.db.DB().Where("id = ?", sessionID).First(&session).Error; err != nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error": "Invalid session",
@@ -421,20 +422,20 @@ func (h *LobbyHandler) InviteUser(c *fiber.Ctx) error {
 		lobbyID, req.InvitedUserID, "pending").First(&existingInvitation).Error
 	if existingErr == nil {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-			"error":       "Invitation already exists for this user",
+			"error": "Invitation already exists for this user",
 		})
 	}
 
 	now := time.Now().UTC()
 	invitation := models.LobbyInvitation{
-		ID:              uuid.New(),
-		LobbyID:         lobby.ID,
-		InviterID:       currentUser.ID,
-		InvitedUserID:   req.InvitedUserID,
-		Status:          "pending",
-		ExpiresAt:       now.Add(30 * time.Minute),
-		CreatedAt:       &now,
-		UpdatedAt:       &now,
+		ID:            uuid.New(),
+		LobbyID:       lobby.ID,
+		InviterID:     currentUser.ID,
+		InvitedUserID: req.InvitedUserID,
+		Status:        "pending",
+		ExpiresAt:     now.Add(30 * time.Minute),
+		CreatedAt:     &now,
+		UpdatedAt:     &now,
 	}
 
 	tx := h.db.DB().Begin()
@@ -484,7 +485,7 @@ func (h *LobbyHandler) InviteUser(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"message": "Invitation sent successfully",
 		"invitation": fiber.Map{
-			"expires_at":  invitation.ExpiresAt,
+			"expires_at": invitation.ExpiresAt,
 		},
 	})
 }
@@ -736,7 +737,7 @@ func (h *LobbyHandler) formatLobbyResponse(lobby models.Lobby, currentUser model
 	return fiber.Map{
 		"id":   lobby.ID,
 		"name": lobby.Name,
-		"owner": fiber.Map {
+		"owner": fiber.Map{
 			"id":   lobby.Owner.ID,
 			"name": lobby.Owner.Name,
 		},

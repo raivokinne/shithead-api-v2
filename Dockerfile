@@ -1,31 +1,22 @@
-FROM golang:1.23-alpine AS build
-
-RUN apk add --no-cache git bash
+FROM golang:1.21-alpine AS build
 
 WORKDIR /app
+
+RUN apk add --no-cache git
 
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
-RUN go install github.com/air-verse/air@latest
+RUN go build -o main .
 
-FROM golang:1.23-alpine AS dev
+FROM alpine:latest
 
 WORKDIR /app
 
-COPY go.mod go.sum ./
-
-RUN go mod download
-
-COPY . .
-
-RUN apk add --no-cache bash git
-
-RUN go install github.com/air-verse/air@latest
+COPY --from=build /app/main .
 
 EXPOSE 8000
 
-CMD ["air"]
-
+CMD ["./main"]
