@@ -1,9 +1,10 @@
 package server
 
 import (
-	"log"
-
+	"github.com/gofiber/contrib/websocket"
+	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/google/uuid"
@@ -14,18 +15,14 @@ import (
 
 func (s *FiberServer) RegisterFiberRoutes() {
 	s.App.Use(cors.New(cors.Config{
-		AllowOrigins:     "https://www.troika.id.lv, http://localhost:3001",
+		AllowOrigins:     "https://www.troika.id.lv, http://localhost:3000",
 		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH",
 		AllowHeaders:     "Accept,Authorization,Content-Type",
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
+	s.App.Use(logger.New())
 	s.App.Use(recover.New())
-	logMiddleware, err := middleware.NewLogMiddleware()
-	if err != nil {
-		log.Fatal(err)
-	}
-	s.App.Use(logMiddleware.Handle)
 	s.App.Use(requestid.New())
 	s.store.RegisterType(uuid.New())
 
@@ -34,6 +31,8 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	profileHandler := handler.NewProfileHandler(s.db)
 	userHandler := handler.NewUserHandler(s.db)
 	notificationHandler := handler.NewNotificationHandler(s.db)
+	gameHandler := handler.NewGameHandler(s.db)
+	cardHandler := handler.NewCardHandler(s.db)
 
 	s.App.Post("/register", authHandler.Register)
 	s.App.Post("/login", authHandler.Login)
@@ -51,14 +50,26 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	lobbies.Post("/invitation/accept", lobbyHandler.AcceptInvitation)
 	lobbies.Post("/:lobbyId/ready", lobbyHandler.ReadyUp)
 
-	// // Game Routes
-	// games := s.App.Group("/games", middleware.AuthMiddleware(s.db))
-	// games.Get("/:gameId", gameHandler.Show)
-	// games.Post("/create", gameHandler.CreateGame)
-	// games.Post("/:gameId/start", gameHandler.StartGame)
-	// games.Post("/:gameId/deal", gameHandler.DealCards)
-	// games.Post("/:gameId/play-card", gameHandler.PlayCard)
-	// games.Get("/:gameId/deck", gameHandler.GetDeckInfo)
+	games := s.App.Group("/games", middleware.AuthMiddleware(s.db))
+	games.Use("/:gameId", func(c *fiber.Ctx) error {
+		if websocket.IsWebSocketUpgrade(c) {
+			c.Locals("allowed", true)
+			return c.Next()
+		}
+		return fiber.ErrUpgradeRequired
+	})
+	games.Get("/:gameId", websocket.New(func(c *websocket.Conn) {
+		allowed := c.Locals("allowed").(bool)
+		if !allowed {
+			c.Close()
+			return
+		}
+
+		gameHandler.Game(c)
+	}))
+
+	cards := s.App.Group("/cards", middleware.AuthMiddleware(s.db))
+	cards.Get("/:gameId/get", cardHandler.GetGameCards)
 
 	profiles := s.App.Group("/profile", middleware.AuthMiddleware(s.db))
 	profiles.Get("/:id/show", profileHandler.Show)

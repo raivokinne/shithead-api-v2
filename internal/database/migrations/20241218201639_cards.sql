@@ -3,7 +3,7 @@ CREATE TABLE cards (
     id UUID PRIMARY KEY,
     deck_id UUID NOT NULL,
     game_id UUID NOT NULL,
-    code VARCHAR(10) UNIQUE NOT NULL,
+    code VARCHAR(10) NOT NULL,
     value VARCHAR(10) NOT NULL,
     suit VARCHAR(10) NOT NULL,
     image_url VARCHAR(255) NULL,
@@ -17,7 +17,7 @@ CREATE TABLE cards (
 
     FOREIGN KEY (deck_id) REFERENCES decks(id) ON DELETE CASCADE,
     FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE,
-    FOREIGN KEY (player_id) REFERENCES users(id) ON DELETE SET NULL
+    FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE SET NULL
 );
 
 -- +goose down

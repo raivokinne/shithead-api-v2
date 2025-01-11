@@ -11,8 +11,6 @@ import (
 	_ "github.com/joho/godotenv/autoload"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-	"gorm.io/gorm/schema"
 )
 
 type Service interface {
@@ -26,7 +24,11 @@ type service struct {
 }
 
 var (
-	dbUrl      = os.Getenv("DATABASE_URL")
+	dbUser     = os.Getenv("DB_USER")
+	dbPassword = os.Getenv("DB_PASSWORD")
+	dbHost     = os.Getenv("DB_HOST")
+	dbPort     = os.Getenv("DB_PORT")
+	dbName     = os.Getenv("DB_NAME")
 	dbInstance *service
 )
 
@@ -35,28 +37,10 @@ func New() Service {
 		return dbInstance
 	}
 
-	gormLogger := logger.New(
-		log.New(os.Stdout, "\r\n", log.LstdFlags),
-		logger.Config{
-			SlowThreshold:             time.Second,
-			LogLevel:                  logger.Info,
-			IgnoreRecordNotFoundError: true,
-			Colorful:                  true,
-		},
-		)
+	dbUrl := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
+		dbHost, dbUser, dbPassword, dbName, dbPort)
 
-	config := &gorm.Config{
-		Logger: gormLogger,
-		NamingStrategy: schema.NamingStrategy{
-			SingularTable: true,
-		},
-		DisableForeignKeyConstraintWhenMigrating: true,
-		PrepareStmt:                              true,
-		SkipDefaultTransaction:                   true,
-		QueryFields:                              true,
-	}
-
-	db, err := gorm.Open(postgres.Open(dbUrl), config)
+	db, err := gorm.Open(postgres.Open(dbUrl))
 	if err != nil {
 		log.Fatal(err)
 	}

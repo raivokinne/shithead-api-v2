@@ -24,9 +24,19 @@ services:
     environment:
       APP_ENV: ${APP_ENV}
       PORT: ${PORT}
-      DB_DRIVER: ${DB_DRIVER}
-      DATABASE_URL: ${DATABASE_URL}
       MIGRATION_DIR: ${MIGRATION_DIR}
+    networks:
+      - shithead
+
+  psql:
+    image: postgres:13-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     networks:
       - shithead
 

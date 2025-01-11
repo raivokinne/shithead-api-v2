@@ -44,8 +44,7 @@ type InviteUserRequest struct {
 }
 
 type AcceptInvitationRequest struct {
-	InviteCode string    `json:"invite_code" validate:"required"`
-	LobbyID    uuid.UUID `json:"lobby_id" validate:"required"`
+	LobbyID uuid.UUID `json:"lobby_id" validate:"required"`
 }
 
 func NewLobbyHandler(db database.Service) *LobbyHandler {
@@ -61,14 +60,46 @@ func generateInviteCode() string {
 }
 
 func (h *LobbyHandler) Index(c *fiber.Ctx) error {
+	sessionID := c.Cookies("session_id")
+	if sessionID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Session ID not provided",
+		})
+	}
+
+	var session models.Session
+	if err := h.db.DB().Where("id = ?", sessionID).First(&session).Error; err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Invalid session",
+		})
+	}
+
+	var currentUser models.User
+	if err := h.db.DB().First(&currentUser, session.UserID).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error fetching user",
+		})
+	}
+
 	var lobbies []models.Lobby
-	if err := h.db.DB().Preload("Owner").Preload("Players").Preload("LobbyInvitations").Find(&lobbies).Error; err != nil {
+	if err := h.db.DB().
+		Preload("Owner").
+		Preload("Players").
+		Preload("LobbyInvitations").
+		Preload("Games").
+		Preload("LobbyQueues").
+		Find(&lobbies).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Error fetching lobbies",
 		})
 	}
 
-	return c.JSON(lobbies)
+	formattedLobbies := make([]fiber.Map, len(lobbies))
+	for i, lobby := range lobbies {
+		formattedLobbies[i] = h.formatLobbyResponse(lobby, currentUser)
+	}
+
+	return c.JSON(formattedLobbies)
 }
 
 func (h *LobbyHandler) Store(c *fiber.Ctx) error {
@@ -97,6 +128,30 @@ func (h *LobbyHandler) Store(c *fiber.Ctx) error {
 	if err := h.db.DB().First(&user, session.UserID).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Error fetching user",
+		})
+	}
+
+	var existingLobby models.Lobby
+	err := h.db.DB().Where("owner_id = ?", user.ID).First(&existingLobby).Error
+	if err == nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "You already have an active lobby",
+		})
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error checking user's lobbies",
+		})
+	}
+
+	var existingPlayer models.Player
+	err = h.db.DB().Where("user_id = ?", user.ID).First(&existingPlayer).Error
+	if err == nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "You are already in another lobby",
+		})
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error checking user's player status",
 		})
 	}
 
@@ -140,10 +195,12 @@ func (h *LobbyHandler) Store(c *fiber.Ctx) error {
 		ID:                  uuid.New(),
 		LobbyID:             lobby.ID,
 		Status:              "waiting",
-		CurrentTurnPlayerID: &user.ID,
+		OwnerID:             user.ID,
+		CurrentTurnPlayerID: user.ID,
 		RoundNumber:         1,
 		Winner:              "none",
 	}
+
 	if err := tx.Create(&game).Error; err != nil {
 		tx.Rollback()
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -264,12 +321,6 @@ func (h *LobbyHandler) JoinLobby(c *fiber.Ctx) error {
 		})
 	}
 
-	var existingPlayer models.Player
-	if err := tx.Where("lobby_id = ? AND user_id = ?", lobbyID, user.ID).First(&existingPlayer).Error; err == nil {
-		h.handleExistingPlayer(tx, c, &lobby, user.ID)
-		return nil
-	}
-
 	if lobby.Status != "waiting" {
 		tx.Rollback()
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -277,11 +328,42 @@ func (h *LobbyHandler) JoinLobby(c *fiber.Ctx) error {
 		})
 	}
 
-	switch lobby.PrivacyLevel {
-	case "password_protected":
-		if err := h.handlePasswordProtectedJoin(&lobby, req.Password); err != nil {
-			tx.Rollback()
-			return err
+	var existingPlayer models.Player
+	if err := tx.Where("lobby_id = ? AND user_id = ?", lobbyID, user.ID).First(&existingPlayer).Error; err == nil {
+		if err := tx.Commit().Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Error committing transaction",
+			})
+		}
+		return c.JSON(fiber.Map{
+			"message":  "Successfully joined lobby",
+			"lobby_id": lobby.ID,
+		})
+	}
+
+	var currentUser models.User
+	if err := tx.First(&currentUser, user.ID).Error; err != nil {
+		tx.Rollback()
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error fetching user",
+		})
+	}
+
+	var currentPlayer *models.Player
+	for _, player := range lobby.Players {
+		if player.UserID == currentUser.ID {
+			currentPlayer = &player
+			break
+		}
+	}
+
+	if existingPlayer.ID != currentPlayer.ID {
+		switch lobby.PrivacyLevel {
+		case "password_protected":
+			if err := h.handlePasswordProtectedJoin(&lobby, req.Password); err != nil {
+				tx.Rollback()
+				return err
+			}
 		}
 	}
 
@@ -313,7 +395,7 @@ func (h *LobbyHandler) LeaveLobby(c *fiber.Ctx) error {
 	tx := h.db.DB().Begin()
 
 	var lobby models.Lobby
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&lobby, lobbyID).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", lobbyID).First(&lobby).Error; err != nil {
 		tx.Rollback()
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "Lobby not found",
@@ -321,9 +403,21 @@ func (h *LobbyHandler) LeaveLobby(c *fiber.Ctx) error {
 	}
 
 	if lobby.OwnerID == userID {
-		tx.Rollback()
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Owner cannot leave lobby",
+		if err := h.deleteLobbyAndRelatedRecords(tx, lobbyID); err != nil {
+			tx.Rollback()
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Error deleting lobby and related records",
+			})
+		}
+
+		if err := tx.Commit().Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Error committing transaction",
+			})
+		}
+
+		return c.JSON(fiber.Map{
+			"message": "Successfully deleted lobby",
 		})
 	}
 
@@ -367,6 +461,34 @@ func (h *LobbyHandler) LeaveLobby(c *fiber.Ctx) error {
 	})
 }
 
+func (h *LobbyHandler) deleteLobbyAndRelatedRecords(tx *gorm.DB, lobbyID string) error {
+	if err := tx.Where("lobby_id = ?", lobbyID).Delete(&models.LobbyInvitation{}).Error; err != nil {
+		return err
+	}
+
+	if err := tx.Where("lobby_id = ?", lobbyID).Delete(&models.Player{}).Error; err != nil {
+		return err
+	}
+
+	if err := tx.Where("lobby_id = ?", lobbyID).Delete(&models.LobbyQueue{}).Error; err != nil {
+		return err
+	}
+
+	if err := tx.Where("lobby_id = ?", lobbyID).Delete(&models.Game{}).Error; err != nil {
+		return err
+	}
+
+	if err := tx.Where("data->>'lobby_id' = ?", lobbyID).Delete(&models.Notification{}).Error; err != nil {
+		return err
+	}
+
+	if err := tx.Where("id = ?", lobbyID).Delete(&models.Lobby{}).Error; err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (h *LobbyHandler) InviteUser(c *fiber.Ctx) error {
 	lobbyID := c.Params("lobbyId")
 
@@ -399,7 +521,7 @@ func (h *LobbyHandler) InviteUser(c *fiber.Ctx) error {
 	}
 
 	var lobby models.Lobby
-	if err := h.db.DB().Preload("Owner").First(&lobby, lobbyID).Error; err != nil {
+	if err := h.db.DB().Where("id = ?", lobbyID).Preload("Owner").First(&lobby).Error; err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "Lobby not found",
 		})
@@ -509,23 +631,33 @@ func (h *LobbyHandler) AcceptInvitation(c *fiber.Ctx) error {
 	userID := session.UserID
 	tx := h.db.DB().Begin()
 
+	fmt.Printf("Looking for invitation with lobby_id: %s and user_id: %s\n", req.LobbyID, userID)
+
 	var invitation models.LobbyInvitation
-	if err := tx.Where("lobby_id = ? AND invitation_token = ? AND status = ? AND expires_at > ?",
-		req.LobbyID, req.InviteCode, "pending", time.Now()).First(&invitation).Error; err != nil {
+	if err := tx.Debug().Where("lobby_id = ? AND invited_user_id = ?",
+		req.LobbyID, userID).First(&invitation).Error; err != nil {
+		fmt.Printf("Error finding invitation: %v\n", err)
 		tx.Rollback()
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "Invalid or expired invitation",
+			"error": "Invalid invitation",
 		})
 	}
 
-	if invitation.InvitedUserID != userID {
+	if invitation.ExpiresAt.Before(time.Now()) {
 		tx.Rollback()
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": "Unauthorized to accept this invitation",
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invitation has expired",
 		})
 	}
 
-	var lobby models.Lobby
+	if invitation.Status != "pending" {
+		tx.Rollback()
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invitation has already been processed",
+		})
+	}
+
+	var lobby *models.Lobby
 	if err := tx.First(&lobby, invitation.LobbyID).Error; err != nil {
 		tx.Rollback()
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -534,40 +666,36 @@ func (h *LobbyHandler) AcceptInvitation(c *fiber.Ctx) error {
 	}
 
 	if lobby.CurrentPlayers >= lobby.MaxPlayers {
-		return h.handleQueueJoin(tx, c, &lobby, userID)
+		tx.Rollback()
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Lobby is full",
+		})
 	}
 
-	if err := tx.Model(&invitation).Update("status", "accepted").Error; err != nil {
+	if err := tx.Model(&invitation).Updates(map[string]interface{}{
+		"status":     "accepted",
+		"updated_at": time.Now(),
+	}).Error; err != nil {
 		tx.Rollback()
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Error updating invitation",
 		})
 	}
 
-	if err := h.addPlayerToLobby(tx, &lobby, userID); err != nil {
+	if err := h.addPlayerToLobby(tx, lobby, userID); err != nil {
 		tx.Rollback()
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Error adding player to lobby",
+			"error": "Error adding user to lobby",
 		})
 	}
 
-	messageType := "lobby_invitation_accepted"
-	notification := models.Notification{
-		UserID: lobby.OwnerID,
-		Type:   &messageType,
-		Data: json.RawMessage(
-			fmt.Sprintf(
-				`{"lobby_id": "%s", "lobby_name": "%s", "message": "Lobby invitation accepted"}`,
-				lobby.ID,
-				lobby.Name,
-			),
-		),
-	}
-
-	if err := tx.Create(&notification).Error; err != nil {
+	if err := tx.Model(&lobby).Updates(map[string]interface{}{
+		"current_players": lobby.CurrentPlayers + 1,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
 		tx.Rollback()
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Error creating notification",
+			"error": "Error updating lobby player count",
 		})
 	}
 
@@ -578,7 +706,7 @@ func (h *LobbyHandler) AcceptInvitation(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"succes":  true,
+		"success": true,
 		"message": "Successfully joined lobby",
 		"lobby":   lobby,
 	})
@@ -685,9 +813,7 @@ func (h *LobbyHandler) handleQueueJoin(tx *gorm.DB, c *fiber.Ctx, lobby *models.
 
 func (h *LobbyHandler) handleExistingPlayer(tx *gorm.DB, c *fiber.Ctx, lobby *models.Lobby, userID uuid.UUID) error {
 	if err := h.addPlayerToLobby(tx, lobby, userID); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Error adding player to lobby",
-		})
+		return err
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -712,8 +838,14 @@ func (h *LobbyHandler) addPlayerToLobby(tx *gorm.DB, lobby *models.Lobby, userID
 		return err
 	}
 
+	var existingPlayer models.Player
+	if err := tx.Where("lobby_id = ? AND user_id = ?", lobby.ID, userID).First(&existingPlayer).Error; err == nil {
+		return nil
+	}
+
 	playerNumber := lobby.CurrentPlayers + 1
 	player := models.Player{
+		ID:      uuid.New(),
 		LobbyID: lobby.ID,
 		GameID:  game.ID,
 		UserID:  userID,
@@ -721,17 +853,34 @@ func (h *LobbyHandler) addPlayerToLobby(tx *gorm.DB, lobby *models.Lobby, userID
 		Score:   0,
 	}
 
+	if err := tx.Model(&lobby).Update("current_players", gorm.Expr("current_players + ?", 1)).Error; err != nil {
+		return err
+	}
+
 	if err := tx.Create(&player).Error; err != nil {
 		return err
 	}
 
-	return tx.Model(lobby).Update("current_players", lobby.CurrentPlayers+1).Error
+	lobby.CurrentPlayers++
+
+	if err := tx.Save(lobby).Error; err != nil {
+		return err
+	}
+	return nil
 }
 
 func (h *LobbyHandler) formatLobbyResponse(lobby models.Lobby, currentUser models.User) fiber.Map {
 	var currentGame *models.Game
 	if len(lobby.Games) > 0 {
 		currentGame = &lobby.Games[0]
+	}
+
+	var currentPlayer *models.Player
+	for _, player := range lobby.Players {
+		if player.UserID == currentUser.ID {
+			currentPlayer = &player
+			break
+		}
 	}
 
 	return fiber.Map{
@@ -742,7 +891,9 @@ func (h *LobbyHandler) formatLobbyResponse(lobby models.Lobby, currentUser model
 			"name": lobby.Owner.Name,
 		},
 		"max_players":       lobby.MaxPlayers,
-		"current_player":    currentUser,
+		"current_user":      currentUser,
+		"is_player":         currentPlayer != nil,
+		"player_role":       getPlayerRole(currentPlayer),
 		"current_players":   lobby.CurrentPlayers,
 		"status":            lobby.Status,
 		"type":              lobby.Type,
@@ -754,6 +905,7 @@ func (h *LobbyHandler) formatLobbyResponse(lobby models.Lobby, currentUser model
 		"queue":             h.formatQueue(lobby.LobbyQueues),
 		"created_at":        lobby.CreatedAt,
 		"updated_at":        lobby.UpdatedAt,
+		"privacy_level":     lobby.PrivacyLevel,
 	}
 }
 
@@ -801,4 +953,11 @@ func (h *LobbyHandler) formatQueue(queue []models.LobbyQueue) []fiber.Map {
 func checkPasswordHash(password string, hash string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 	return err == nil
+}
+
+func getPlayerRole(player *models.Player) string {
+	if player == nil {
+		return ""
+	}
+	return player.Role
 }

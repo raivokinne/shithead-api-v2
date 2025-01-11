@@ -6,10 +6,12 @@ CREATE TABLE games (
     current_turn_player_id UUID NULL,
     round_number INTEGER NOT NULL DEFAULT 1,
     winner VARCHAR(20) NOT NULL DEFAULT 'none',
+    owner_id UUID NULL,
     created_at TIMESTAMP NULL,
     updated_at TIMESTAMP NULL,
 
-    FOREIGN KEY (lobby_id) REFERENCES lobbies(id) ON DELETE CASCADE
+    FOREIGN KEY (lobby_id) REFERENCES lobbies(id) ON DELETE CASCADE,
+	 FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- +goose down

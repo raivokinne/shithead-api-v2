@@ -277,7 +277,7 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		Name:     "session_id",
 		Value:    session.ID.String(),
 		Expires:  time.Now().Add(24 * time.Hour),
-		HTTPOnly: true,
+		HTTPOnly: false,
 		Secure:   true,
 		SameSite: "Lax",
 	})
