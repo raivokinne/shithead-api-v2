@@ -15,7 +15,7 @@ import (
 
 func (s *FiberServer) RegisterFiberRoutes() {
 	s.App.Use(cors.New(cors.Config{
-		AllowOrigins:     "https://www.troika.id.lv, http://localhost:3000",
+		AllowOrigins:     "https://www.troika.id.lv, http://192.168.8.108:3000",
 		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH",
 		AllowHeaders:     "Accept,Authorization,Content-Type",
 		AllowCredentials: true,

@@ -107,25 +107,82 @@ func (h *GameHandler) Game(c *websocket.Conn) {
 			continue
 		}
 
+		sessionId := c.Cookies("session_id")
+		var session models.Session
+		if err := h.db.DB().Where("id = ?", sessionId).First(&session).Error; err != nil {
+			h.hub.broadcast <- GameMessage{
+				Type: "game_error",
+				Payload: fiber.Map{
+					"error": "Invalid Session",
+				},
+			}
+		}
+
 		switch message.Type {
 		case "game_action":
 			h.handleGameAction(message)
-		case "start_game":
-			sessionId := c.Cookies("session_id")
-			var session models.Session
-			if err := h.db.DB().Where("id = ?", sessionId).First(&session).Error; err != nil {
-				h.hub.broadcast <- GameMessage{
-					Type: "game_error",
-					Payload: fiber.Map{
-						"error": "Invalid Session",
-					},
-				}
+		case "lobby_ready":
+			payload, ok := message.Payload.(map[string]interface{})
+			if !ok {
+				log.Printf("Invalid payload format for lobby_ready: %v", message.Payload)
+				break
 			}
 
+			lobbyID, ok := payload["lobbyId"].(string)
+
+			if !ok || lobbyID == "" {
+				log.Printf("Invalid or missing lobbyId in payload: %v", payload)
+				break
+			}
+
+			userId := session.UserID
+
+			tx := h.db.DB().Begin()
+
+			var player models.Player
+			if err := tx.Where("lobby_id = ? AND user_id = ?", lobbyID, userId).First(&player).Error; err != nil {
+				tx.Rollback()
+				log.Printf("Player not found in lobby: %v", payload)
+				break
+			}
+
+			if player.IsReady {
+				log.Print("Aready ready")
+				h.hub.broadcast <- GameMessage{
+					Type: "lobby_ready",
+					Payload: fiber.Map{
+						"message":  "Already ready",
+						"is_ready": "true",
+					},
+				}
+				break
+			}
+
+			if err := tx.Model(&player).Update("is_ready", "true").Error; err != nil {
+				tx.Rollback()
+				log.Print("Error updating player status")
+				break
+			}
+
+			if err := tx.Commit().Error; err != nil {
+				tx.Rollback()
+				log.Print("Error committing transaction")
+				break
+			}
+
+			h.hub.broadcast <- GameMessage{
+				Type: "lobby_ready",
+				Payload: fiber.Map{
+					"message":  "Succesfully ready up",
+					"is_ready": "true",
+					"player": player,
+				},
+			}
+		case "start_game":
 			payload, ok := message.Payload.(map[string]interface{})
 			if !ok {
 				log.Printf("Invalid payload format for start_game: %v", message.Payload)
-				continue
+				break
 			}
 
 			gameId, ok := payload["gameId"].(string)

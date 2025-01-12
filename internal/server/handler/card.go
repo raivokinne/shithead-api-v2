@@ -150,7 +150,7 @@ func (h *CardHandler) GetGameCards(c *fiber.Ctx) error {
 	gameState := GameState{
 		ID:              game.ID,
 		Status:          game.Status,
-		CurrentPlayerID: player.ID,
+		CurrentPlayerID: game.CurrentTurnPlayerID,
 		RoundNumber:     game.RoundNumber,
 		Players:         players,
 		Game:            game,
