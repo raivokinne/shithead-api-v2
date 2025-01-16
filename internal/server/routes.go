@@ -15,7 +15,8 @@ import (
 
 func (s *FiberServer) RegisterFiberRoutes() {
 	s.App.Use(cors.New(cors.Config{
-		AllowOrigins:     "https://www.troika.id.lv, http://192.168.8.108:3000",
+		// AllowOrigins:     "https://www.troika.id.lv, http://192.168.8.108:3000",
+		AllowOrigins:     "https://www.troika.id.lv, http://10.13.59.2:3000",
 		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH",
 		AllowHeaders:     "Accept,Authorization,Content-Type",
 		AllowCredentials: true,
@@ -48,7 +49,6 @@ func (s *FiberServer) RegisterFiberRoutes() {
 	lobbies.Post("/:lobbyId/leave", lobbyHandler.LeaveLobby)
 	lobbies.Post("/:lobbyId/invite", lobbyHandler.InviteUser)
 	lobbies.Post("/invitation/accept", lobbyHandler.AcceptInvitation)
-	lobbies.Post("/:lobbyId/ready", lobbyHandler.ReadyUp)
 
 	games := s.App.Group("/games", middleware.AuthMiddleware(s.db))
 	games.Use("/:gameId", func(c *fiber.Ctx) error {

@@ -11,6 +11,8 @@ import (
 
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type GameMessage struct {
@@ -175,7 +177,122 @@ func (h *GameHandler) Game(c *websocket.Conn) {
 				Payload: fiber.Map{
 					"message":  "Succesfully ready up",
 					"is_ready": "true",
-					"player": player,
+					"player":   player,
+				},
+			}
+		case "play_card":
+			payload, ok := message.Payload.(map[string]interface{})
+			if !ok {
+				log.Printf("Invalid payload format for play_card: %v", message.Payload)
+				break
+			}
+
+			cardID, ok := payload["cardId"].(string)
+			gameID, ok2 := payload["gameId"].(string)
+
+			if !ok || !ok2  {
+				log.Printf("Missing required fields in payload: %v", payload)
+				break
+			}
+
+			tx := h.db.DB().Begin()
+
+			parsedCardID, err := uuid.Parse(cardID)
+			if err != nil {
+				tx.Rollback()
+				log.Printf("Invalid card ID: %v", err)
+				break
+			}
+
+			parsedGameID, err := uuid.Parse(gameID)
+			if err != nil {
+				tx.Rollback()
+				log.Printf("Invalid game ID: %v", err)
+				break
+			}
+
+			var card models.Card
+			if err := tx.Where("id = ?", parsedCardID).First(&card).Error; err != nil {
+				tx.Rollback()
+				log.Printf("Card not found: %v", err)
+				break
+			}
+
+			updates := map[string]interface{}{
+				"location_type": "play_pile",
+				"player_id":     nil,
+			}
+
+			if err := tx.Model(&card).Updates(updates).Error; err != nil {
+				tx.Rollback()
+				log.Printf("Error updating card location: %v", err)
+				break
+			}
+
+			if err := h.moveToNextPlayer(tx, parsedGameID); err != nil {
+				tx.Rollback()
+				log.Printf("Error moving to next player: %v", err)
+				break
+			}
+
+			if err := tx.Commit().Error; err != nil {
+				tx.Rollback()
+				log.Printf("Error committing transaction: %v", err)
+				break
+			}
+
+			h.hub.broadcast <- GameMessage{
+				Type: "game_update",
+				Payload: fiber.Map{
+					"card_played": card,
+					"game_id":     parsedGameID.String(),
+				},
+			}
+
+		case "draw_card":
+			payload, ok := message.Payload.(map[string]interface{})
+			if !ok {
+				log.Printf("Invalid payload format for draw_card: %v", message.Payload)
+				break
+			}
+
+			playerID, ok := payload["playerId"].(string)
+			if !ok {
+				log.Printf("Missing playerID in payload: %v", payload)
+				break
+			}
+
+			tx := h.db.DB().Begin()
+
+			var card models.Card
+			if err := tx.Where("location_type = ? AND player_id IS NULL", "deck").
+				Order("random()").First(&card).Error; err != nil {
+				tx.Rollback()
+				log.Printf("No cards left in deck: %v", err)
+				break
+			}
+
+			if err := tx.Model(&card).Updates(map[string]interface{}{
+				"status":        "hand",
+				"location_type": "hand",
+				"player_id":     playerID,
+			}).Error; err != nil {
+				tx.Rollback()
+				log.Printf("Error updating drawn card: %v", err)
+				break
+			}
+
+			if err := tx.Commit().Error; err != nil {
+				tx.Rollback()
+				log.Printf("Error committing transaction: %v", err)
+				break
+			}
+
+			h.hub.broadcast <- GameMessage{
+				Type: "game_update",
+				Payload: fiber.Map{
+					"card_drawn": card,
+					"player_id":  playerID,
 				},
 			}
 		case "start_game":
@@ -231,3 +348,47 @@ func (h *GameHandler) handleGameAction(message GameMessage) {
 		Payload: message.Payload,
 	}
 }
+
+func isValidPlay(card, topCard models.Card) bool {
+	if topCard.ID == uuid.Nil {
+		return true
+	}
+
+	if card.Value == "6" || card.Value == "10" {
+		return true
+	}
+
+	return card.Value == topCard.Value
+}
+
+func (h *GameHandler) moveToNextPlayer(tx *gorm.DB, gameID uuid.UUID) error {
+    var game models.Game
+    if err := tx.Preload("Lobby").Preload("Lobby.Players").Where("id = ?", gameID).First(&game).Error; err != nil {
+        return err
+    }
+
+    if len(game.Lobby.Players) == 0 {
+        return fmt.Errorf("no players in the game lobby")
+    }
+
+    currentPlayerIndex := -1
+    for i, player := range game.Lobby.Players {
+        if player.ID == game.CurrentTurnPlayerID {
+            currentPlayerIndex = i
+            break
+        }
+    }
+
+    if currentPlayerIndex == -1 {
+        return fmt.Errorf("current player not found")
+    }
+
+    nextPlayerIndex := (currentPlayerIndex + 1) % len(game.Lobby.Players)
+
+    game.CurrentTurnPlayerID = game.Lobby.Players[nextPlayerIndex].ID
+
+    log.Printf("Next player index: %d, Player ID: %s", nextPlayerIndex, game.CurrentTurnPlayerID)
+
+    return tx.Save(&game).Error
+}
+

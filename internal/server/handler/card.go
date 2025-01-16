@@ -58,6 +58,7 @@ type PlayerSummary struct {
 	Avatar    *string   `json:"avatar,omitempty"`
 	CardCount int64     `json:"card_count"`
 	IsCurrent bool      `json:"is_current"`
+	UserID    uuid.UUID `json:"user_id"`
 }
 
 type LobbyInfo struct {
@@ -150,7 +151,7 @@ func (h *CardHandler) GetGameCards(c *fiber.Ctx) error {
 	gameState := GameState{
 		ID:              game.ID,
 		Status:          game.Status,
-		CurrentPlayerID: game.CurrentTurnPlayerID,
+		CurrentPlayerID: player.ID,
 		RoundNumber:     game.RoundNumber,
 		Players:         players,
 		Game:            game,
@@ -194,153 +195,137 @@ func (h *CardHandler) getOrCreateGameCards(gameId string) ([]models.Card, error)
 		return nil, fmt.Errorf("invalid game ID format: %v", err)
 	}
 
+	if err := h.db.DB().Where("game_id = ?", gameUUID).First(&existingDeck).Error; err == nil {
+		if err := h.db.DB().Where("deck_id = ?", existingDeck.ID).Find(&cards).Error; err != nil {
+			return nil, fmt.Errorf("error fetching existing cards: %v", err)
+		}
+		return cards, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("error checking for existing deck: %v", err)
+	}
+
+	log.Printf("No deck found, creating a new deck for game %s", gameId)
+
 	tx := h.db.DB().Begin()
 	if tx.Error != nil {
 		return nil, fmt.Errorf("error starting transaction: %v", tx.Error)
 	}
-
-	if err := tx.Exec("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE").Error; err != nil {
-		tx.Rollback()
-		return nil, fmt.Errorf("error setting isolation level: %v", err)
-	}
-
-	deckErr := tx.Where("game_id = ?", gameUUID).First(&existingDeck).Error
-	if !errors.Is(deckErr, gorm.ErrRecordNotFound) {
-		if err := tx.Where("game_id = ?", gameUUID).Find(&cards).Error; err != nil {
+	defer func() {
+		if r := recover(); r != nil {
 			tx.Rollback()
-			return nil, fmt.Errorf("error fetching existing cards: %v", err)
 		}
-		tx.Commit()
-		return cards, nil
-	}
-	if errors.Is(deckErr, gorm.ErrRecordNotFound) {
-		log.Printf("No deck found, creating a new deck for game %s", gameId)
-		tx := h.db.DB().Begin()
-		if tx.Error != nil {
-			return nil, fmt.Errorf("error starting transaction: %v", tx.Error)
-		}
+	}()
 
-		defer func() {
-			if r := recover(); r != nil {
-				tx.Rollback()
-			}
-		}()
-
-		deck := models.Deck{
-			ID:             uuid.New(),
-			GameID:         gameUUID,
-			DeckType:       "standard",
-			TotalCards:     52,
-			RemainingCards: 52,
-			DeckConfiguration: json.RawMessage(`{
+	deck := models.Deck{
+		ID:             uuid.New(),
+		GameID:         gameUUID,
+		DeckType:       "standard",
+		TotalCards:     52,
+		RemainingCards: 52,
+		DeckConfiguration: json.RawMessage(`{
             "includeJokers": false,
             "specialCards": {
                 "6": "reset_deck",
                 "10": "clear_deck_extra_move"
             }
         }`),
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		}
-
-		log.Printf("Creating new deck for game %s", gameId)
-		if err := tx.Create(&deck).Error; err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("error creating deck: %v", err)
-		}
-
-		var players []models.Player
-		if err := tx.Where("game_id = ?", gameUUID).Find(&players).Error; err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("error fetching players: %v", err)
-		}
-
-		if len(players) == 0 {
-			tx.Rollback()
-			return nil, fmt.Errorf("no players found for game %s", gameId)
-		}
-
-		apiCards, err := FetchAllCards()
-		if err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("error fetching cards from API: %v", err)
-		}
-
-		if len(apiCards) != 52 {
-			tx.Rollback()
-			return nil, fmt.Errorf("expected 52 cards from API, got %d", len(apiCards))
-		}
-
-		cards = make([]models.Card, 0, 52)
-		cardIndex := 0
-
-		for _, player := range players {
-			for _, status := range []string{"hidden", "faceup", "hand"} {
-				for i := 0; i < 3; i++ {
-					if cardIndex >= len(apiCards) {
-						tx.Rollback()
-						return nil, fmt.Errorf("not enough cards for distribution at index %d", cardIndex)
-					}
-
-					card := models.Card{
-						ID:            uuid.New(),
-						DeckID:        deck.ID,
-						GameID:        gameUUID,
-						Code:          apiCards[cardIndex].Code,
-						Value:         apiCards[cardIndex].Value,
-						Suit:          apiCards[cardIndex].Suit,
-						ImageURL:      &apiCards[cardIndex].Image,
-						Status:        status,
-						LocationType:  "player",
-						PlayerID:      &player.ID,
-						IsSpecialCard: isSpecialCard(apiCards[cardIndex].Value),
-						SpecialAction: getSpecialAction(apiCards[cardIndex].Value),
-						CreatedAt:     time.Now(),
-						UpdatedAt:     time.Now(),
-					}
-					cards = append(cards, card)
-					cardIndex++
-				}
-			}
-		}
-
-		for i := cardIndex; i < len(apiCards); i++ {
-			card := models.Card{
-				ID:            uuid.New(),
-				DeckID:        deck.ID,
-				GameID:        gameUUID,
-				Code:          apiCards[i].Code,
-				Value:         apiCards[i].Value,
-				Suit:          apiCards[i].Suit,
-				ImageURL:      &apiCards[i].Image,
-				Status:        "in_deck",
-				LocationType:  "deck",
-				IsSpecialCard: isSpecialCard(apiCards[i].Value),
-				SpecialAction: getSpecialAction(apiCards[i].Value),
-				CreatedAt:     time.Now(),
-				UpdatedAt:     time.Now(),
-			}
-			cards = append(cards, card)
-		}
-
-		deck.RemainingCards = len(apiCards) - cardIndex
-		if err := tx.Save(&deck).Error; err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("error updating deck remaining cards: %v", err)
-		}
-
-		log.Printf("Creating %d cards for game %s", len(cards), gameId)
-		if err := tx.Create(&cards).Error; err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("error creating cards: %v", err)
-		}
-
-		if err := tx.Commit().Error; err != nil {
-			return nil, fmt.Errorf("error committing transaction: %v", err)
-		}
-
-		log.Printf("Successfully created deck and distributed %d cards for game %s", len(cards), gameId)
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
+
+	if err := tx.Create(&deck).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("error creating deck: %v", err)
+	}
+
+	var players []models.Player
+	if err := tx.Where("game_id = ?", gameUUID).Find(&players).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("error fetching players: %v", err)
+	}
+	if len(players) == 0 {
+		tx.Rollback()
+		return nil, fmt.Errorf("no players found for game %s", gameId)
+	}
+
+	apiCards, err := FetchAllCards()
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("error fetching cards from API: %v", err)
+	}
+	if len(apiCards) != 52 {
+		tx.Rollback()
+		return nil, fmt.Errorf("expected 52 cards from API, got %d", len(apiCards))
+	}
+
+	cards = make([]models.Card, 0, 52)
+	cardIndex := 0
+
+	for _, player := range players {
+		for _, status := range []string{"hidden", "faceup", "hand"} {
+			for i := 0; i < 3; i++ {
+				if cardIndex >= len(apiCards) {
+					tx.Rollback()
+					return nil, fmt.Errorf("not enough cards for distribution at index %d", cardIndex)
+				}
+
+				card := models.Card{
+					ID:            uuid.New(),
+					DeckID:        deck.ID,
+					GameID:        gameUUID,
+					Code:          apiCards[cardIndex].Code,
+					Value:         apiCards[cardIndex].Value,
+					Suit:          apiCards[cardIndex].Suit,
+					ImageURL:      &apiCards[cardIndex].Image,
+					Status:        status,
+					LocationType:  "player",
+					PlayerID:      &player.ID,
+					IsSpecialCard: isSpecialCard(apiCards[cardIndex].Value),
+					SpecialAction: getSpecialAction(apiCards[cardIndex].Value),
+					CreatedAt:     time.Now(),
+					UpdatedAt:     time.Now(),
+				}
+				cards = append(cards, card)
+				cardIndex++
+			}
+		}
+	}
+
+	for i := cardIndex; i < len(apiCards); i++ {
+		card := models.Card{
+			ID:            uuid.New(),
+			DeckID:        deck.ID,
+			GameID:        gameUUID,
+			Code:          apiCards[i].Code,
+			Value:         apiCards[i].Value,
+			Suit:          apiCards[i].Suit,
+			ImageURL:      &apiCards[i].Image,
+			Status:        "in_deck",
+			LocationType:  "deck",
+			IsSpecialCard: isSpecialCard(apiCards[i].Value),
+			SpecialAction: getSpecialAction(apiCards[i].Value),
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		}
+		cards = append(cards, card)
+	}
+
+	deck.RemainingCards = len(apiCards) - cardIndex
+	if err := tx.Save(&deck).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("error updating deck remaining cards: %v", err)
+	}
+
+	if err := tx.Create(&cards).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("error creating cards: %v", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, fmt.Errorf("error committing transaction: %v", err)
+	}
+
+	log.Printf("Successfully created deck and distributed %d cards for game %s", len(cards), gameId)
 	return cards, nil
 }
 
@@ -446,6 +431,7 @@ func (h *CardHandler) getPlayerSummaries(gameId string, currentPlayerID uuid.UUI
 			Avatar:    p.User.Avatar,
 			CardCount: cardCount,
 			IsCurrent: p.ID == currentPlayerID,
+			UserID: 	  p.UserID,
 		}
 	}
 

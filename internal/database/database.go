@@ -29,7 +29,7 @@ var (
 	dbHost     = os.Getenv("DB_HOST")
 	dbPort     = os.Getenv("DB_PORT")
 	dbName     = os.Getenv("DB_NAME")
-	dbSSLMode  = os.Getenv("DB_SSLMODE")
+	// dbSSLMode  = os.Getenv("DB_SSLMODE")
 	dbInstance *service
 )
 
@@ -38,8 +38,11 @@ func New() Service {
 		return dbInstance
 	}
 
-	dbUrl := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
-		dbHost, dbUser, dbPassword, dbName, dbPort, dbSSLMode)
+	// dbUrl := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
+	// 	dbHost, dbUser, dbPassword, dbName, dbPort, dbSSLMode)
+
+	dbUrl := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s",
+		dbHost, dbUser, dbPassword, dbName, dbPort)
 
 	db, err := gorm.Open(postgres.Open(dbUrl))
 	if err != nil {
